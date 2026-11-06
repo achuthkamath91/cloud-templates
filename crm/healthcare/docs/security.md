@@ -17,7 +17,7 @@ review for your jurisdiction (HIPAA in the US, DPDP Act in India, GDPR in the EU
 | Lambda role limited to GetItem, PutItem and Query on the data table, and PutItem on the audit table | `infra/template.yaml` |
 | KMS (CMK with rotation, kept if the stack is deleted), PITR, deletion protection on the prod tables and the user pool | `infra/template.yaml` |
 | Short token lifetimes, strict CSP, HSTS, no-referrer | Cognito client, `frontend/public/_headers` |
-| OIDC from GitHub to AWS (token scoped to the deploy job), Actions pinned to commit SHAs, template linted on every PR, manual approval on `production` | `.github/workflows/deploy.yml` |
+| OIDC from GitHub to AWS (token scoped to the deploy job), Actions pinned to commit SHAs, template linted on every PR, manual approval on `production` | `.github/workflows/crm-healthcare.yml` (repo root) |
 
 ## Cloudflare and PHI
 Cloudflare serves only static files (the JS bundle). The browser calls API Gateway and Cognito directly, so PHI
