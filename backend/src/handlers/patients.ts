@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { z } from 'zod';
 import { requirePermission } from '../lib/auth';
-import { TABLE, ddb, decodeToken, encodeToken, parseLimit, patientPk, patientsGsi, stripKeys } from '../lib/db';
+import { TABLE, ddb, patientPk, patientsGsi, queryPage, stripKeys } from '../lib/db';
 import { HttpError, json, parseBody } from '../lib/http';
 import type { Handler } from '../lib/types';
 
@@ -48,18 +48,16 @@ export const createPatient: Handler = async ({ caller, event, audit }) => {
 
 export const listPatients: Handler = async ({ caller, event }) => {
   requirePermission(caller, 'patient:read');
-  const q = event.queryStringParameters ?? {};
-  const res = await ddb.send(
-    new QueryCommand({
+  return queryPage(
+    {
       TableName: TABLE,
       IndexName: 'GSI1',
       KeyConditionExpression: 'GSI1PK = :pk',
       ExpressionAttributeValues: { ':pk': patientsGsi(caller.tenantId) },
-      Limit: parseLimit(q.limit),
-      ExclusiveStartKey: decodeToken(q.next, caller.tenantId),
-    }),
+    },
+    event.queryStringParameters ?? {},
+    caller.tenantId,
   );
-  return json(200, { items: (res.Items ?? []).map(stripKeys), next: encodeToken(res.LastEvaluatedKey) });
 };
 
 export const getPatient: Handler = async ({ caller, params }) => {
@@ -73,6 +71,21 @@ export const updatePatient: Handler = async ({ caller, event, params }) => {
   const existing = await getPatientItem(caller.tenantId, params.id);
   const merged: Record<string, unknown> = { ...existing, ...patch, updatedAt: new Date().toISOString(), updatedBy: caller.sub };
   if (patch.lastName) merged.GSI1SK = `${patch.lastName.toLowerCase()}#${params.id}`;
-  await ddb.send(new PutCommand({ TableName: TABLE, Item: merged, ConditionExpression: 'attribute_exists(PK)' }));
+  try {
+    // Only save if nobody changed the patient since we read it; otherwise we would erase their edit.
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE,
+        Item: merged,
+        ConditionExpression: 'updatedAt = :seen',
+        ExpressionAttributeValues: { ':seen': existing.updatedAt },
+      }),
+    );
+  } catch (e) {
+    if ((e as Error).name === 'ConditionalCheckFailedException') {
+      throw new HttpError(409, 'Patient was changed or removed by someone else. Reload and try again.');
+    }
+    throw e;
+  }
   return json(200, stripKeys(merged));
 };

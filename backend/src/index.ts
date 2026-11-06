@@ -2,7 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { createAppointment, listAppointments } from './handlers/appointments';
 import { createInteraction, listInteractions } from './handlers/interactions';
 import { createPatient, getPatient, listPatients, updatePatient } from './handlers/patients';
-import { audit } from './lib/audit';
+import { audit, type AuditEvent } from './lib/audit';
 import { getCaller } from './lib/auth';
 import { HttpError, json } from './lib/http';
 import type { Ctx, Handler } from './lib/types';
@@ -41,19 +41,21 @@ export const handler = async (event: APIGatewayProxyEventV2WithJWTAuthorizer): P
   const params = route.pattern.exec(event.rawPath)?.groups ?? {};
   const ctx: Ctx = { caller, event, params, audit: { patientId: params.id } };
   const meta = { action: route.action, requestId: event.requestContext.requestId, sourceIp };
+  const record = (outcome: AuditEvent['outcome']) =>
+    audit(caller, { ...meta, outcome, patientId: ctx.audit.patientId });
+  const logAuditFailure = () => console.error(JSON.stringify({ level: 'error', message: 'audit write failed' }));
+  const isWrite = method !== 'GET';
 
   try {
+    // Writes: store the "attempt" record first. If that fails, the change never happens, so a retry is safe.
+    if (isWrite) await record('attempt');
     const res = await route.handler(ctx);
-    // The audit write runs after the handler: a failure here fails the request but does not undo the change.
-    await audit(caller, { ...meta, outcome: 'success', patientId: ctx.audit.patientId });
+    // A read is returned only if its audit record is stored. A write is already saved, so a failed record is logged, not shown to the user.
+    await (isWrite ? record('success').catch(logAuditFailure) : record('success'));
     return res;
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500;
-    await audit(caller, {
-      ...meta,
-      outcome: status === 403 ? 'denied' : 'error',
-      patientId: ctx.audit.patientId,
-    }).catch(() => console.error(JSON.stringify({ level: 'error', message: 'audit write failed' })));
+    await record(status === 403 ? 'denied' : 'error').catch(logAuditFailure);
     if (e instanceof HttpError) return json(e.status, { error: e.message });
     // Log the error class only; messages from the SDK can include item data.
     console.error(JSON.stringify({ level: 'error', action: route.action, name: (e as Error).name }));

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { z } from 'zod';
 import { requirePermission } from '../lib/auth';
-import { TABLE, ddb, decodeToken, encodeToken, parseLimit, patientPk, stripKeys } from '../lib/db';
+import { TABLE, ddb, patientPk, queryPage, stripKeys } from '../lib/db';
 import { HttpError, json, parseBody } from '../lib/http';
 import type { Handler } from '../lib/types';
 import { getPatientItem } from './patients';
@@ -41,15 +41,14 @@ export const listInteractions: Handler = async ({ caller, event, params }) => {
   if (q.kind !== 'outreach' && q.kind !== 'clinical') throw new HttpError(400, 'kind must be outreach or clinical');
   requirePermission(caller, `interaction:${q.kind}:read`);
   await getPatientItem(caller.tenantId, params.id);
-  const res = await ddb.send(
-    new QueryCommand({
+  return queryPage(
+    {
       TableName: TABLE,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :p)',
       ExpressionAttributeValues: { ':pk': patientPk(caller.tenantId, params.id), ':p': prefix(q.kind) },
       ScanIndexForward: false,
-      Limit: parseLimit(q.limit),
-      ExclusiveStartKey: decodeToken(q.next, caller.tenantId),
-    }),
+    },
+    q,
+    caller.tenantId,
   );
-  return json(200, { items: (res.Items ?? []).map(stripKeys), next: encodeToken(res.LastEvaluatedKey) });
 };

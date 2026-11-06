@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { HttpError } from './http';
+import { DynamoDBDocumentClient, QueryCommand, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
+import { HttpError, json } from './http';
 
 export const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -37,4 +37,16 @@ export function decodeToken(token: string | undefined, tenant: string): Record<s
   } catch {
     throw new HttpError(400, 'Invalid pagination token');
   }
+}
+
+/** One page of a query: applies the caller's page size and tenant-checked token, and returns the API response. */
+export async function queryPage(
+  input: Omit<QueryCommandInput, 'Limit' | 'ExclusiveStartKey'>,
+  q: Record<string, string | undefined>,
+  tenant: string,
+) {
+  const res = await ddb.send(
+    new QueryCommand({ ...input, Limit: parseLimit(q.limit), ExclusiveStartKey: decodeToken(q.next, tenant) }),
+  );
+  return json(200, { items: (res.Items ?? []).map(stripKeys), next: encodeToken(res.LastEvaluatedKey) });
 }

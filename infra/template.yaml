@@ -32,6 +32,8 @@ Resources:
   # ---------- Encryption ----------
   DataKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub healthcare-crm ${Stage} data key
       EnableKeyRotation: true
@@ -44,6 +46,15 @@ Resources:
               AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
             Action: kms:*
             Resource: '*'
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub logs.${AWS::Region}.amazonaws.com
+            Action: [kms:Encrypt*, kms:Decrypt*, kms:ReEncrypt*, kms:GenerateDataKey*, kms:Describe*]
+            Resource: '*'
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
 
   # ---------- Data ----------
   Table:
@@ -98,7 +109,10 @@ Resources:
   # ---------- Identity ----------
   UserPool:
     Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      DeletionProtection: ACTIVE
       UserPoolName: !Sub healthcare-crm-${Stage}
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
@@ -185,11 +199,10 @@ Resources:
       CodeUri: ../backend
       Handler: index.handler
       Policies:
-        - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - Statement:
             - Effect: Allow
-              Action: [dynamodb:Query]
-              Resource: !Sub ${Table.Arn}/index/GSI1
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Query]
+              Resource: [!GetAtt Table.Arn, !Sub '${Table.Arn}/index/GSI1']
             - Effect: Allow
               Action: [dynamodb:PutItem]
               Resource: !GetAtt AuditTable.Arn

@@ -74,16 +74,20 @@ function Login({ onDone }: { onDone: () => void }) {
 
 function Home({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [next, setNext] = useState<string | undefined>();
   const [error, setError] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', dob: '' });
   const canWrite = session.groups.some((g) => WRITERS.includes(g));
 
-  const refresh = () =>
-    listPatients()
-      .then((r) => setPatients(r.items))
+  const load = (token?: string) =>
+    listPatients(token)
+      .then((r) => {
+        setPatients((prev) => (token ? [...prev, ...r.items] : r.items));
+        setNext(r.next);
+      })
       .catch((e: Error) => setError(e.message));
   useEffect(() => {
-    refresh();
+    load();
   }, []);
 
   async function add(e: FormEvent) {
@@ -92,7 +96,7 @@ function Home({ session, onLogout }: { session: Session; onLogout: () => void })
     try {
       await createPatient({ ...form, status: 'lead' });
       setForm({ firstName: '', lastName: '', dob: '' });
-      await refresh();
+      await load();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -140,6 +144,11 @@ function Home({ session, onLogout }: { session: Session; onLogout: () => void })
           ))}
         </tbody>
       </table>
+      {next && (
+        <button className="secondary" onClick={() => load(next)}>
+          Load more
+        </button>
+      )}
     </main>
   );
 }
