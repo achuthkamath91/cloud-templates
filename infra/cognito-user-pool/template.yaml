@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Cognito user pool for staff sign-in (admin-created users, mandatory TOTP MFA, immutable tenantId) and one web client
+
+Parameters:
+  ExportPrefix:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]*'
+    Description: Names this deployment, for example healthcare-crm-prod.
+  ClientName:
+    Type: String
+    Default: web
+    Description: Name of the app client used by the web app.
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      DeletionProtection: ACTIVE
+      UserPoolName: !Ref ExportPrefix
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: 'ON'
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 3
+      Schema:
+        - Name: tenantId
+          AttributeDataType: String
+          Mutable: false
+          StringAttributeConstraints: { MinLength: '1', MaxLength: '64' }
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Ref ClientName
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      IdTokenValidity: 30
+      AccessTokenValidity: 30
+      RefreshTokenValidity: 8
+      TokenValidityUnits: { IdToken: minutes, AccessToken: minutes, RefreshToken: hours }
+      ReadAttributes: [email, custom:tenantId]
+      WriteAttributes: [email]
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub ${ExportPrefix}-UserPoolId
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub ${ExportPrefix}-UserPoolClientId

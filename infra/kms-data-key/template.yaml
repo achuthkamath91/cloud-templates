@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Customer-managed KMS key (with rotation) for DynamoDB tables and CloudWatch log groups
+
+Parameters:
+  ExportPrefix:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]*'
+    Description: Names this deployment, for example healthcare-crm-prod. Every block that belongs together uses the same prefix.
+  LogGroupPathPattern:
+    Type: String
+    Default: /aws/lambda/*
+    Description: Which CloudWatch log groups may use this key.
+
+Resources:
+  Key:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub ${ExportPrefix} data key
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub logs.${AWS::Region}.amazonaws.com
+            Action: [kms:Encrypt*, kms:Decrypt*, kms:ReEncrypt*, kms:GenerateDataKey*, kms:Describe*]
+            Resource: '*'
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupPathPattern}
+
+  Alias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/${ExportPrefix}-data
+      TargetKeyId: !Ref Key
+
+Outputs:
+  KeyArn:
+    Value: !GetAtt Key.Arn
+    Export:
+      Name: !Sub ${ExportPrefix}-DataKeyArn

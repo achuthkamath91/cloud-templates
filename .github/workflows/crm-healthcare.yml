@@ -3,7 +3,8 @@ name: crm-healthcare
 on:
   push:
     branches: [main]
-    paths: ['crm/healthcare/**', '.github/workflows/crm-healthcare.yml']
+    # infra/** is included because this workflow deploys the building blocks too
+    paths: ['crm/healthcare/**', 'infra/**', '.github/workflows/crm-healthcare.yml']
   pull_request:
     paths: ['crm/healthcare/**', '.github/workflows/crm-healthcare.yml']
 
@@ -37,7 +38,7 @@ jobs:
       run:
         working-directory: crm/healthcare
     env:
-      STACK: healthcare-crm-prod
+      PREFIX: healthcare-crm-prod # shared by every infra stack of this deployment (see infra/README.md)
       # Repo variables go through env, not straight into the shell script, so their text is never run as code.
       FRONTEND_ORIGIN: ${{ vars.FRONTEND_ORIGIN }}
       AWS_REGION_NAME: ${{ vars.AWS_REGION }}
@@ -52,21 +53,31 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Backend deploy (SAM)
+      - name: Deploy infra building blocks and the app stack
         run: |
+          deploy() { # stack suffix, template file, extra parameters
+            local name=$1 template=$2; shift 2
+            aws cloudformation deploy --stack-name "$PREFIX-$name" --template-file "$template" \
+              --no-fail-on-empty-changeset --parameter-overrides ExportPrefix="$PREFIX" "$@"
+          }
+          deploy kms ../../infra/kms-data-key/template.yaml
+          deploy data ../../infra/dynamodb-table/template.yaml TableLabel=data Stage=prod EnableGsi=true
+          deploy audit ../../infra/dynamodb-table/template.yaml TableLabel=audit Stage=prod
+          deploy auth ../../infra/cognito-user-pool/template.yaml
           (cd backend && npm ci)
           sam build -t infra/template.yaml
-          sam deploy --stack-name "$STACK" --resolve-s3 --capabilities CAPABILITY_IAM \
+          sam deploy --stack-name "$PREFIX-app" --resolve-s3 --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset --no-confirm-changeset \
-            --parameter-overrides Stage=prod AllowedOrigin="$FRONTEND_ORIGIN"
+            --parameter-overrides ExportPrefix="$PREFIX"
+          deploy api ../../infra/http-api-jwt/template.yaml AllowedOrigin="$FRONTEND_ORIGIN"
 
       - name: Read stack outputs
         run: |
-          out() { aws cloudformation describe-stacks --stack-name "$STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
-          echo "VITE_API_URL=$(out ApiUrl)" >> "$GITHUB_ENV"
-          echo "VITE_USER_POOL_ID=$(out UserPoolId)" >> "$GITHUB_ENV"
-          echo "VITE_USER_POOL_CLIENT_ID=$(out UserPoolClientId)" >> "$GITHUB_ENV"
+          out() { aws cloudformation describe-stacks --stack-name "$PREFIX-$1" \
+            --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text; }
+          echo "VITE_API_URL=$(out api ApiUrl)" >> "$GITHUB_ENV"
+          echo "VITE_USER_POOL_ID=$(out auth UserPoolId)" >> "$GITHUB_ENV"
+          echo "VITE_USER_POOL_CLIENT_ID=$(out auth UserPoolClientId)" >> "$GITHUB_ENV"
 
       - name: Lock CSP to this deployment's origins
         working-directory: crm/healthcare/frontend

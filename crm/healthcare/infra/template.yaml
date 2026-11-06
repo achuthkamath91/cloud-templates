@@ -1,19 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Healthcare CRM backend - Cognito, HTTP API, Lambda, DynamoDB (KMS encrypted)
+Description: Healthcare CRM app stack - Lambda function, log group and Cognito role groups. Uses the building blocks in /infra.
 
 Parameters:
-  Stage:
+  ExportPrefix:
     Type: String
-    Default: dev
-    AllowedValues: [dev, staging, prod]
-  AllowedOrigin:
-    Type: String
-    Default: http://localhost:5173
-    Description: Cloudflare-hosted frontend origin for CORS (e.g. https://crm.example.com)
-
-Conditions:
-  IsProd: !Equals [!Ref Stage, prod]
+    AllowedPattern: '[a-z0-9][a-z0-9-]*'
+    Description: Same prefix as the infra building blocks of this deployment, for example healthcare-crm-prod.
 
 Globals:
   Function:
@@ -22,170 +15,8 @@ Globals:
     MemorySize: 256
     Timeout: 10
     Tracing: Active
-    Environment:
-      Variables:
-        TABLE_NAME: !Ref Table
-        AUDIT_TABLE_NAME: !Ref AuditTable
-        NODE_OPTIONS: --enable-source-maps
 
 Resources:
-  # ---------- Encryption ----------
-  DataKey:
-    Type: AWS::KMS::Key
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Description: !Sub healthcare-crm ${Stage} data key
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AccountAdmin
-            Effect: Allow
-            Principal:
-              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
-            Action: kms:*
-            Resource: '*'
-          - Sid: AllowCloudWatchLogs
-            Effect: Allow
-            Principal:
-              Service: !Sub logs.${AWS::Region}.amazonaws.com
-            Action: [kms:Encrypt*, kms:Decrypt*, kms:ReEncrypt*, kms:GenerateDataKey*, kms:Describe*]
-            Resource: '*'
-            Condition:
-              ArnLike:
-                kms:EncryptionContext:aws:logs:arn: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
-
-  # ---------- Data ----------
-  Table:
-    Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      TableName: !Sub healthcare-crm-${Stage}
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - { AttributeName: PK, AttributeType: S }
-        - { AttributeName: SK, AttributeType: S }
-        - { AttributeName: GSI1PK, AttributeType: S }
-        - { AttributeName: GSI1SK, AttributeType: S }
-      KeySchema:
-        - { AttributeName: PK, KeyType: HASH }
-        - { AttributeName: SK, KeyType: RANGE }
-      GlobalSecondaryIndexes:
-        - IndexName: GSI1
-          KeySchema:
-            - { AttributeName: GSI1PK, KeyType: HASH }
-            - { AttributeName: GSI1SK, KeyType: RANGE }
-          Projection: { ProjectionType: ALL }
-      SSESpecification:
-        SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !GetAtt DataKey.Arn
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      DeletionProtectionEnabled: !If [IsProd, true, false]
-
-  AuditTable:
-    Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      TableName: !Sub healthcare-crm-audit-${Stage}
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - { AttributeName: PK, AttributeType: S }
-        - { AttributeName: SK, AttributeType: S }
-      KeySchema:
-        - { AttributeName: PK, KeyType: HASH }
-        - { AttributeName: SK, KeyType: RANGE }
-      SSESpecification:
-        SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !GetAtt DataKey.Arn
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-
-  # ---------- Identity ----------
-  UserPool:
-    Type: AWS::Cognito::UserPool
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      DeletionProtection: ACTIVE
-      UserPoolName: !Sub healthcare-crm-${Stage}
-      AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
-      UsernameAttributes: [email]
-      AutoVerifiedAttributes: [email]
-      MfaConfiguration: 'ON'
-      EnabledMfas: [SOFTWARE_TOKEN_MFA]
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 12
-          RequireLowercase: true
-          RequireUppercase: true
-          RequireNumbers: true
-          RequireSymbols: true
-          TemporaryPasswordValidityDays: 3
-      Schema:
-        - Name: tenantId
-          AttributeDataType: String
-          Mutable: false
-          StringAttributeConstraints: { MinLength: '1', MaxLength: '64' }
-      AccountRecoverySetting:
-        RecoveryMechanisms:
-          - { Name: verified_email, Priority: 1 }
-
-  UserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      UserPoolId: !Ref UserPool
-      ClientName: crm-web
-      GenerateSecret: false
-      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
-      PreventUserExistenceErrors: ENABLED
-      IdTokenValidity: 30
-      AccessTokenValidity: 30
-      RefreshTokenValidity: 8
-      TokenValidityUnits: { IdToken: minutes, AccessToken: minutes, RefreshToken: hours }
-      ReadAttributes: [email, custom:tenantId]
-      WriteAttributes: [email]
-
-  GroupAdmin:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties: { UserPoolId: !Ref UserPool, GroupName: admin, Description: Tenant administrator }
-  GroupClinician:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties: { UserPoolId: !Ref UserPool, GroupName: clinician, Description: Clinical staff }
-  GroupStaff:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties: { UserPoolId: !Ref UserPool, GroupName: staff, Description: Front desk / care coordination }
-  GroupBilling:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties: { UserPoolId: !Ref UserPool, GroupName: billing, Description: 'Billing, demographics read-only' }
-
-  # ---------- API ----------
-  HttpApi:
-    Type: AWS::Serverless::HttpApi
-    Properties:
-      CorsConfiguration:
-        AllowOrigins: [!Ref AllowedOrigin]
-        AllowMethods: [GET, POST, PUT, OPTIONS]
-        AllowHeaders: [Authorization, Content-Type]
-        MaxAge: 600
-      DefaultRouteSettings:
-        ThrottlingBurstLimit: 50
-        ThrottlingRateLimit: 25
-      Auth:
-        DefaultAuthorizer: CognitoJwt
-        Authorizers:
-          CognitoJwt:
-            IdentitySource: $request.header.Authorization
-            JwtConfiguration:
-              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
-              audience: [!Ref UserPoolClient]
-
   ApiFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -198,36 +29,71 @@ Resources:
     Properties:
       CodeUri: ../backend
       Handler: index.handler
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Fn::ImportValue: !Sub ${ExportPrefix}-data-TableName
+          AUDIT_TABLE_NAME:
+            Fn::ImportValue: !Sub ${ExportPrefix}-audit-TableName
+          NODE_OPTIONS: --enable-source-maps
       Policies:
         - Statement:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Query]
-              Resource: [!GetAtt Table.Arn, !Sub '${Table.Arn}/index/GSI1']
+              Resource:
+                - Fn::ImportValue: !Sub ${ExportPrefix}-data-TableArn
+                - !Sub
+                  - ${TableArn}/index/GSI1
+                  - TableArn:
+                      Fn::ImportValue: !Sub ${ExportPrefix}-data-TableArn
             - Effect: Allow
               Action: [dynamodb:PutItem]
-              Resource: !GetAtt AuditTable.Arn
+              Resource:
+                Fn::ImportValue: !Sub ${ExportPrefix}-audit-TableArn
             - Effect: Allow
               Action: [kms:Decrypt, kms:Encrypt, kms:GenerateDataKey*, kms:DescribeKey]
-              Resource: !GetAtt DataKey.Arn
-      Events:
-        Any:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /{proxy+}
-            Method: ANY
+              Resource:
+                Fn::ImportValue: !Sub ${ExportPrefix}-DataKeyArn
 
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${ApiFunction}
       RetentionInDays: 365
-      KmsKeyId: !GetAtt DataKey.Arn
+      KmsKeyId:
+        Fn::ImportValue: !Sub ${ExportPrefix}-DataKeyArn
+
+  GroupAdmin:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Fn::ImportValue: !Sub ${ExportPrefix}-UserPoolId
+      GroupName: admin
+      Description: Tenant administrator
+  GroupClinician:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Fn::ImportValue: !Sub ${ExportPrefix}-UserPoolId
+      GroupName: clinician
+      Description: Clinical staff
+  GroupStaff:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Fn::ImportValue: !Sub ${ExportPrefix}-UserPoolId
+      GroupName: staff
+      Description: Front desk / care coordination
+  GroupBilling:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Fn::ImportValue: !Sub ${ExportPrefix}-UserPoolId
+      GroupName: billing
+      Description: Billing, demographics read-only
 
 Outputs:
-  ApiUrl:
-    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
-  UserPoolId:
-    Value: !Ref UserPool
-  UserPoolClientId:
-    Value: !Ref UserPoolClient
+  FunctionArn:
+    Value: !GetAtt ApiFunction.Arn
+    Export:
+      Name: !Sub ${ExportPrefix}-FunctionArn

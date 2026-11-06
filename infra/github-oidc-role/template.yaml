@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: IAM role that GitHub Actions assumes through OIDC, limited to one repository and one environment
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
+    Description: Repository allowed to assume the role, as owner/name, for example achuthkamath91/cloud-templates.
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: Only workflow runs in this GitHub environment can assume the role.
+  CreateOidcProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: An AWS account can have only one GitHub OIDC provider. Set to false if the account already has one.
+  PermissionsPolicyArn:
+    Type: String
+    Description: ARN of the managed policy that says what this role may deploy. Scope it to the services your stacks use.
+  RoleName:
+    Type: String
+    Default: github-actions-deploy
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      MaxSessionDuration: 3600
+      ManagedPolicyArns: [!Ref PermissionsPolicyArn]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateProvider
+                - !Ref OidcProvider
+                - !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${GitHubEnvironment}
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt DeployRole.Arn
+    Description: Put this in the GitHub secret AWS_DEPLOY_ROLE_ARN.
