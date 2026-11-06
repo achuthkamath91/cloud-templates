@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Healthcare CRM app stack - Lambda function, log group and Cognito role groups. Uses the building blocks in /infra.
+Description: Healthcare CRM app stack - Lambda function, log group and Cognito role groups. Uses the other stacks in this infra folder.
 
 Parameters:
   ExportPrefix:
     Type: String
     AllowedPattern: '[a-z0-9][a-z0-9-]*'
-    Description: Same prefix as the infra building blocks of this deployment, for example healthcare-crm-prod.
+    Description: Same prefix as the other infra stacks of this deployment, for example healthcare-crm-prod.
 
 Globals:
   Function:
@@ -27,7 +27,7 @@ Resources:
         Sourcemap: true
         EntryPoints: [src/index.ts]
     Properties:
-      CodeUri: ../backend
+      CodeUri: ../../backend
       Handler: index.handler
       Environment:
         Variables:
