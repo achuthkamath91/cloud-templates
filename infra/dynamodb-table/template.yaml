@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: KMS-encrypted DynamoDB table (PK/SK, optional GSI1) with point-in-time recovery
+
+Parameters:
+  ExportPrefix:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]*'
+    Description: Names this deployment, for example healthcare-crm-prod. Must match the prefix of the kms-data-key stack.
+  TableLabel:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9-]*'
+    Description: Short name for this table, for example data or audit. The table is named <ExportPrefix>-<TableLabel>.
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deletion protection is switched on when this is prod.
+  EnableGsi:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Adds a global secondary index named GSI1 on GSI1PK and GSI1SK.
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, prod]
+  HasGsi: !Equals [!Ref EnableGsi, 'true']
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ExportPrefix}-${TableLabel}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: !If
+        - HasGsi
+        - - { AttributeName: PK, AttributeType: S }
+          - { AttributeName: SK, AttributeType: S }
+          - { AttributeName: GSI1PK, AttributeType: S }
+          - { AttributeName: GSI1SK, AttributeType: S }
+        - - { AttributeName: PK, AttributeType: S }
+          - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes: !If
+        - HasGsi
+        - - IndexName: GSI1
+            KeySchema:
+              - { AttributeName: GSI1PK, KeyType: HASH }
+              - { AttributeName: GSI1SK, KeyType: RANGE }
+            Projection: { ProjectionType: ALL }
+        - !Ref AWS::NoValue
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId:
+          Fn::ImportValue: !Sub ${ExportPrefix}-DataKeyArn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: !If [IsProd, true, false]
+
+Outputs:
+  TableName:
+    Value: !Ref Table
+    Export:
+      Name: !Sub ${ExportPrefix}-${TableLabel}-TableName
+  TableArn:
+    Value: !GetAtt Table.Arn
+    Export:
+      Name: !Sub ${ExportPrefix}-${TableLabel}-TableArn

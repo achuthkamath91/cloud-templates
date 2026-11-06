@@ -55,20 +55,25 @@ The matrix lives in `backend/src/lib/auth.ts` and is unit-tested.
 
 | Table | Contents |
 |---|---|
-| `healthcare-crm-<stage>` | Patients (name, DOB, contact, status), interaction notes (`outreach` / `clinical`), appointments. Single-table design, keys prefixed `T#<tenantId>#`. |
-| `healthcare-crm-audit-<stage>` | One record per API request: user, roles, action, outcome, patient ID, request ID, source IP. Never stores patient field values. |
+| `<prefix>-data` | Patients (name, DOB, contact, status), interaction notes (`outreach` / `clinical`), appointments. Single-table design, keys prefixed `T#<tenantId>#`. |
+| `<prefix>-audit` | One record per API request: user, roles, action, outcome, patient ID, request ID, source IP. Never stores patient field values. |
+
+`<prefix>` is the deployment name you choose, for example `healthcare-crm-prod`.
 
 User accounts live in Cognito, not DynamoDB.
 
 ## Layout
 
 ```
-infra/template.yaml     SAM/CloudFormation: Cognito, KMS, DynamoDB x2, HTTP API, Lambda
+infra/template.yaml     SAM app stack: Lambda function, log group, Cognito role groups
 backend/                TypeScript Lambda (router, handlers, RBAC, audit) + vitest
 frontend/               Vite + React SPA, wrangler.jsonc for Cloudflare, CSP in public/_headers
-docs/                   security notes and known issues, ADRs
-.github/workflows/      test on PRs, deploy on main
+docs/                   security notes and known issues, ADRs, architecture diagram
 ```
+
+The AWS building blocks (KMS key, DynamoDB tables, Cognito user pool, HTTP API) live in the repo's top-level
+[`infra/`](../../infra) folder and are deployed as separate stacks. The CI workflow is
+`.github/workflows/crm-healthcare.yml` at the repo root.
 
 ## API
 
@@ -86,19 +91,30 @@ The UI currently has only sign-in and a patient list/add screen; appointments an
 Prerequisites: AWS account (with a BAA if you ever use real PHI), AWS CLI, SAM CLI, Node 24 (matches the Lambda runtime), a Cloudflare account.
 
 ```bash
-# 1. Backend
+# 1. Tests
 cd backend && npm ci && npm test && cd ..
-sam build -t infra/template.yaml
-sam deploy --stack-name healthcare-crm-dev --guided   # set AllowedOrigin to your frontend URL
 
-# 2. Create the first user (admin-only sign-up; tenantId is set here and is immutable)
-POOL=<UserPoolId output>
+# 2. Infrastructure: one stack per building block, all sharing one prefix (run from crm/healthcare)
+PREFIX=healthcare-crm-dev
+deploy() { name=$1; template=$2; shift 2; aws cloudformation deploy --stack-name "$PREFIX-$name" \
+  --template-file "$template" --no-fail-on-empty-changeset --parameter-overrides ExportPrefix="$PREFIX" "$@"; }
+deploy kms   ../../infra/kms-data-key/template.yaml
+deploy data  ../../infra/dynamodb-table/template.yaml TableLabel=data Stage=dev EnableGsi=true
+deploy audit ../../infra/dynamodb-table/template.yaml TableLabel=audit Stage=dev
+deploy auth  ../../infra/cognito-user-pool/template.yaml
+sam build -t infra/template.yaml
+sam deploy --stack-name "$PREFIX-app" --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides ExportPrefix="$PREFIX"
+deploy api   ../../infra/http-api-jwt/template.yaml AllowedOrigin=http://localhost:5173
+
+# 3. Create the first user (admin-only sign-up; tenantId is set here and is immutable)
+POOL=$(aws cloudformation describe-stacks --stack-name "$PREFIX-auth" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
 aws cognito-idp admin-create-user --user-pool-id $POOL --username admin@clinic.example \
   --user-attributes Name=email,Value=admin@clinic.example Name=email_verified,Value=true Name=custom:tenantId,Value=clinic-001
 aws cognito-idp admin-add-user-to-group --user-pool-id $POOL --username admin@clinic.example --group-name admin
 
-# 3. Frontend (local)
-cd frontend && cp .env.example .env   # fill from stack outputs
+# 4. Frontend (local)
+cd frontend && cp .env.example .env   # fill from the ApiUrl output of the api stack and the auth stack outputs
 npm ci && npm run dev
 ```
 
@@ -109,7 +125,7 @@ region. There is deliberately no local deploy script.
 
 ### CI/CD setup
 Repo variables: `AWS_REGION`, `FRONTEND_ORIGIN`. Secrets: `AWS_DEPLOY_ROLE_ARN` (IAM role trusting GitHub OIDC,
-restricted to this repo and the `production` environment), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+restricted to this repo and the `production` environment; create it with [`infra/github-oidc-role`](../../infra/github-oidc-role)), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 Create a `production` environment with required reviewers.
 
 ## Why DynamoDB and not SQL?
