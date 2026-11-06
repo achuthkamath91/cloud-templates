@@ -7,17 +7,17 @@ review for your jurisdiction (HIPAA in the US, DPDP Act in India, GDPR in the EU
 ## Built in
 | Control | Where |
 |---|---|
-| Admin-only user creation, 12+ char passwords, mandatory TOTP MFA | `infra/cognito-user-pool` (repo root) |
+| Admin-only user creation, 12+ char passwords, mandatory TOTP MFA | `infra/cognito-user-pool` |
 | Immutable `custom:tenantId`, not writable by the client | UserPool schema + client `WriteAttributes` |
-| JWT verified at the edge (issuer + audience) before Lambda runs | `infra/http-api-jwt` (repo root) |
+| JWT verified at the edge (issuer + audience) before Lambda runs | `infra/http-api-jwt` |
 | RBAC enforced server-side per route | `backend/src/lib/auth.ts` |
 | Tenant-prefixed keys, tenant-checked pagination tokens | `backend/src/lib/db.ts` |
 | Input validation, no values echoed in errors | `backend/src/lib/http.ts` |
 | Audit record per request (who, what, which patient, outcome); for writes an "attempt" record is stored first, so a failed audit write stops the change | `backend/src/index.ts`, `backend/src/lib/audit.ts` |
-| Lambda role limited to GetItem, PutItem and Query on the data table, and PutItem on the audit table | `infra/template.yaml` (this template's app stack) |
-| KMS (CMK with rotation, kept if the stack is deleted), PITR, deletion protection on the prod tables and the user pool | `infra/kms-data-key`, `infra/dynamodb-table`, `infra/cognito-user-pool` (repo root) |
+| Lambda role limited to GetItem, PutItem and Query on the data table, and PutItem on the audit table | `infra/app/template.yaml` |
+| KMS (CMK with rotation, kept if the stack is deleted), PITR, deletion protection on the prod tables and the user pool | `infra/kms-data-key`, `infra/dynamodb-table`, `infra/cognito-user-pool` |
 | Short token lifetimes, strict CSP, HSTS, no-referrer | Cognito client, `frontend/public/_headers` |
-| OIDC from GitHub to AWS (token scoped to the deploy job), Actions pinned to commit SHAs, template linted on every PR, manual approval on `production` | `.github/workflows/crm-healthcare.yml` (repo root) |
+| OIDC from GitHub to AWS (token scoped to the deploy job), Actions pinned to commit SHAs, template linted on every PR, manual approval on `production` | `.github/workflows/healthcare-crm.yml` (repo root) |
 
 ## Cloudflare and PHI
 Cloudflare serves only static files (the JS bundle). The browser calls API Gateway and Cognito directly, so PHI
@@ -28,7 +28,7 @@ plan covers a BAA first.
 
 ### High
 1. **Lock down the AWS role that GitHub Actions assumes.** Create it with
-   [`infra/github-oidc-role`](../../../infra/github-oidc-role), which limits it to one repository and the `production`
+   [`infra/github-oidc-role`](../infra/github-oidc-role), which limits it to one repository and the `production`
    environment. You must still supply a permissions policy scoped to what the stacks need.
 2. **Revoked access lingers.** Removing a user or changing their group takes effect only when their token expires
    (30 minutes). Shorten token lifetimes for PHI.

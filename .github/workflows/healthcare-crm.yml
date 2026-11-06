@@ -1,12 +1,11 @@
-name: crm-healthcare
+name: healthcare-crm
 
 on:
   push:
     branches: [main]
-    # infra/** is included because this workflow deploys the building blocks too
-    paths: ['crm/healthcare/**', 'infra/**', '.github/workflows/crm-healthcare.yml']
+    paths: ['templates/healthcare-crm/**', '.github/workflows/healthcare-crm.yml']
   pull_request:
-    paths: ['crm/healthcare/**', '.github/workflows/crm-healthcare.yml']
+    paths: ['templates/healthcare-crm/**', '.github/workflows/healthcare-crm.yml']
 
 permissions:
   contents: read
@@ -18,12 +17,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { persist-credentials: false }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: { node-version: 24, cache: npm, cache-dependency-path: 'crm/healthcare/**/package-lock.json' }
-      - run: pipx run cfn-lint crm/healthcare/infra/template.yaml
+        with: { node-version: 24, cache: npm, cache-dependency-path: 'templates/healthcare-crm/**/package-lock.json' }
+      - run: pipx run cfn-lint "templates/healthcare-crm/infra/*/template.yaml"
       - run: npm ci && npm run typecheck && npm test
-        working-directory: crm/healthcare/backend
+        working-directory: templates/healthcare-crm/backend
       - run: npm ci && npm run typecheck
-        working-directory: crm/healthcare/frontend
+        working-directory: templates/healthcare-crm/frontend
 
   deploy:
     needs: test
@@ -36,7 +35,7 @@ jobs:
     environment: production # add required reviewers in repo settings
     defaults:
       run:
-        working-directory: crm/healthcare
+        working-directory: templates/healthcare-crm
     env:
       PREFIX: healthcare-crm-prod # shared by every infra stack of this deployment (see infra/README.md)
       # Repo variables go through env, not straight into the shell script, so their text is never run as code.
@@ -53,23 +52,23 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Deploy infra building blocks and the app stack
+      - name: Deploy the infra stacks and the app stack
         run: |
           deploy() { # stack suffix, template file, extra parameters
             local name=$1 template=$2; shift 2
             aws cloudformation deploy --stack-name "$PREFIX-$name" --template-file "$template" \
               --no-fail-on-empty-changeset --parameter-overrides ExportPrefix="$PREFIX" "$@"
           }
-          deploy kms ../../infra/kms-data-key/template.yaml
-          deploy data ../../infra/dynamodb-table/template.yaml TableLabel=data Stage=prod EnableGsi=true
-          deploy audit ../../infra/dynamodb-table/template.yaml TableLabel=audit Stage=prod
-          deploy auth ../../infra/cognito-user-pool/template.yaml
+          deploy kms infra/kms-data-key/template.yaml
+          deploy data infra/dynamodb-table/template.yaml TableLabel=data Stage=prod EnableGsi=true
+          deploy audit infra/dynamodb-table/template.yaml TableLabel=audit Stage=prod
+          deploy auth infra/cognito-user-pool/template.yaml
           (cd backend && npm ci)
-          sam build -t infra/template.yaml
+          sam build -t infra/app/template.yaml
           sam deploy --stack-name "$PREFIX-app" --resolve-s3 --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset --no-confirm-changeset \
             --parameter-overrides ExportPrefix="$PREFIX"
-          deploy api ../../infra/http-api-jwt/template.yaml AllowedOrigin="$FRONTEND_ORIGIN"
+          deploy api infra/http-api-jwt/template.yaml AllowedOrigin="$FRONTEND_ORIGIN"
 
       - name: Read stack outputs
         run: |
@@ -80,16 +79,16 @@ jobs:
           echo "VITE_USER_POOL_CLIENT_ID=$(out auth UserPoolClientId)" >> "$GITHUB_ENV"
 
       - name: Lock CSP to this deployment's origins
-        working-directory: crm/healthcare/frontend
+        working-directory: templates/healthcare-crm/frontend
         run: |
           sed -i "s|__API_ORIGIN__|$VITE_API_URL|; s|__COGNITO_ORIGIN__|https://cognito-idp.${AWS_REGION_NAME}.amazonaws.com|" public/_headers
 
       - name: Build frontend
-        working-directory: crm/healthcare/frontend
+        working-directory: templates/healthcare-crm/frontend
         run: npm ci && npm run build
       - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: crm/healthcare/frontend
+          workingDirectory: templates/healthcare-crm/frontend
           command: deploy

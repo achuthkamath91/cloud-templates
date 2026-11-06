@@ -36,6 +36,6 @@ aws cloudformation deploy --stack-name healthcare-crm-prod-api --template-file t
 ## Notes
 - Deploy it last: it imports the app stack's `FunctionArn`.
 - All routes go to one function (`ANY /{proxy+}`), which does its own routing and permission checks.
-- No access logs yet, and the throttle is shared by all callers (see `crm/healthcare/docs/security.md`).
+- No access logs yet, and the throttle is shared by all callers (see `../../docs/security.md`).
 - Browser preflight (CORS `OPTIONS`) against the authorized catch-all route has not been tested on real AWS.
 - Never deployed. It passes `cfn-lint` only.

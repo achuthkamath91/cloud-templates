@@ -65,15 +65,14 @@ User accounts live in Cognito, not DynamoDB.
 ## Layout
 
 ```
-infra/template.yaml     SAM app stack: Lambda function, log group, Cognito role groups
+infra/                  CloudFormation stacks, one folder each: key, tables, user pool, API, app, deploy role
 backend/                TypeScript Lambda (router, handlers, RBAC, audit) + vitest
 frontend/               Vite + React SPA, wrangler.jsonc for Cloudflare, CSP in public/_headers
 docs/                   security notes and known issues, ADRs, architecture diagram
 ```
 
-The AWS building blocks (KMS key, DynamoDB tables, Cognito user pool, HTTP API) live in the repo's top-level
-[`infra/`](../../infra) folder and are deployed as separate stacks. The CI workflow is
-`.github/workflows/crm-healthcare.yml` at the repo root.
+Each folder under [`infra/`](infra) is a separate stack; see [`infra/README.md`](infra/README.md). The CI workflow is
+`.github/workflows/healthcare-crm.yml` at the repo root: copy it along with this folder.
 
 ## API
 
@@ -94,17 +93,17 @@ Prerequisites: AWS account (with a BAA if you ever use real PHI), AWS CLI, SAM C
 # 1. Tests
 cd backend && npm ci && npm test && cd ..
 
-# 2. Infrastructure: one stack per building block, all sharing one prefix (run from crm/healthcare)
+# 2. Infrastructure: one stack per folder under infra/, all sharing one prefix (run from this template's folder)
 PREFIX=healthcare-crm-dev
 deploy() { name=$1; template=$2; shift 2; aws cloudformation deploy --stack-name "$PREFIX-$name" \
   --template-file "$template" --no-fail-on-empty-changeset --parameter-overrides ExportPrefix="$PREFIX" "$@"; }
-deploy kms   ../../infra/kms-data-key/template.yaml
-deploy data  ../../infra/dynamodb-table/template.yaml TableLabel=data Stage=dev EnableGsi=true
-deploy audit ../../infra/dynamodb-table/template.yaml TableLabel=audit Stage=dev
-deploy auth  ../../infra/cognito-user-pool/template.yaml
-sam build -t infra/template.yaml
+deploy kms   infra/kms-data-key/template.yaml
+deploy data  infra/dynamodb-table/template.yaml TableLabel=data Stage=dev EnableGsi=true
+deploy audit infra/dynamodb-table/template.yaml TableLabel=audit Stage=dev
+deploy auth  infra/cognito-user-pool/template.yaml
+sam build -t infra/app/template.yaml
 sam deploy --stack-name "$PREFIX-app" --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides ExportPrefix="$PREFIX"
-deploy api   ../../infra/http-api-jwt/template.yaml AllowedOrigin=http://localhost:5173
+deploy api   infra/http-api-jwt/template.yaml AllowedOrigin=http://localhost:5173
 
 # 3. Create the first user (admin-only sign-up; tenantId is set here and is immutable)
 POOL=$(aws cloudformation describe-stacks --stack-name "$PREFIX-auth" \
@@ -125,7 +124,7 @@ region. There is deliberately no local deploy script.
 
 ### CI/CD setup
 Repo variables: `AWS_REGION`, `FRONTEND_ORIGIN`. Secrets: `AWS_DEPLOY_ROLE_ARN` (IAM role trusting GitHub OIDC,
-restricted to this repo and the `production` environment; create it with [`infra/github-oidc-role`](../../infra/github-oidc-role)), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+restricted to this repo and the `production` environment; create it with [`infra/github-oidc-role`](infra/github-oidc-role)), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 Create a `production` environment with required reviewers.
 
 ## Why DynamoDB and not SQL?
