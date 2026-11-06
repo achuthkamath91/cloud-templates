@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { z } from 'zod';
 import { requirePermission } from '../lib/auth';
-import { TABLE, apptDayGsi, ddb, decodeToken, encodeToken, parseLimit, patientPk, stripKeys } from '../lib/db';
+import { TABLE, apptDayGsi, ddb, patientPk, queryPage, stripKeys } from '../lib/db';
 import { HttpError, json, parseBody } from '../lib/http';
 import type { Handler } from '../lib/types';
 import { getPatientItem } from './patients';
@@ -44,15 +44,14 @@ export const listAppointments: Handler = async ({ caller, event }) => {
   requirePermission(caller, 'appointment:read');
   const q = event.queryStringParameters ?? {};
   if (!q.date || !/^\d{4}-\d{2}-\d{2}$/.test(q.date)) throw new HttpError(400, 'date=YYYY-MM-DD (UTC day) is required');
-  const res = await ddb.send(
-    new QueryCommand({
+  return queryPage(
+    {
       TableName: TABLE,
       IndexName: 'GSI1',
       KeyConditionExpression: 'GSI1PK = :pk',
       ExpressionAttributeValues: { ':pk': apptDayGsi(caller.tenantId, q.date) },
-      Limit: parseLimit(q.limit),
-      ExclusiveStartKey: decodeToken(q.next, caller.tenantId),
-    }),
+    },
+    q,
+    caller.tenantId,
   );
-  return json(200, { items: (res.Items ?? []).map(stripKeys), next: encodeToken(res.LastEvaluatedKey) });
 };

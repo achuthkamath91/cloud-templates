@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && wrangler deploy"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "aws-amplify": "^6.6.0",

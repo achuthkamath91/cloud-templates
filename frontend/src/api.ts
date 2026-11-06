@@ -26,7 +26,8 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const listPatients = () => call<{ items: Patient[]; next?: string }>('/patients');
+export const listPatients = (next?: string) =>
+  call<{ items: Patient[]; next?: string }>(next ? `/patients?next=${encodeURIComponent(next)}` : '/patients');
 
 export const createPatient = (p: Omit<Patient, 'id'>) =>
   call<Patient>('/patients', { method: 'POST', body: JSON.stringify(p) });

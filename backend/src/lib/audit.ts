@@ -5,7 +5,7 @@ import { AUDIT_TABLE, ddb } from './db';
 
 export interface AuditEvent {
   action: string;
-  outcome: 'success' | 'denied' | 'error';
+  outcome: 'attempt' | 'success' | 'denied' | 'error';
   patientId?: string;
   requestId?: string;
   sourceIp?: string;

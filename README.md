@@ -4,8 +4,8 @@ A serverless, multi-tenant healthcare CRM reference implementation: Cognito user
 authenticated HTTP API on Lambda, DynamoDB storage, and a React SPA hosted on Cloudflare. A GitHub Actions
 workflow deploys it all using OIDC, with no long-lived AWS keys.
 
-> **Status: reference architecture, not production-ready.** It has been typechecked and unit-tested (RBAC logic
-> only) but never deployed or pen-tested, and it is not a certified compliance product. Read
+> **Status: reference architecture, not production-ready.** It has been typechecked and unit-tested (RBAC, the page-token
+> guard and audit ordering) but never deployed or pen-tested, and it is not a certified compliance product. Read
 > [docs/security.md](docs/security.md), including the known issues, before putting any real patient data near it.
 
 ## Architecture
@@ -83,7 +83,7 @@ docs/                   security notes and known issues, ADRs
 | Method | Path | Notes |
 |---|---|---|
 | GET / POST | `/patients` | list (paginated via `next`) / create |
-| GET / PUT | `/patients/{id}` | read / update |
+| GET / PUT | `/patients/{id}` | read / update (409 if someone else changed the patient first) |
 | GET / POST | `/patients/{id}/interactions` | `?kind=outreach\|clinical` on GET |
 | GET / POST | `/appointments` | `?date=YYYY-MM-DD` (UTC day) on GET |
 
@@ -91,7 +91,7 @@ The UI currently has only sign-in and a patient list/add screen; appointments an
 
 ## Getting started
 
-Prerequisites: AWS account (with a BAA if you ever use real PHI), AWS CLI, SAM CLI, Node 20+, a Cloudflare account.
+Prerequisites: AWS account (with a BAA if you ever use real PHI), AWS CLI, SAM CLI, Node 24 (matches the Lambda runtime), a Cloudflare account.
 
 ```bash
 # 1. Backend
@@ -112,8 +112,8 @@ npm ci && npm run dev
 
 First sign-in prompts for a new password, then TOTP enrolment, then a code.
 
-**Deploying the frontend to Cloudflare:** use the CI workflow. A local `npm run deploy` currently ships unreplaced
-CSP placeholders and will block API calls (see known issues).
+**Deploying the frontend to Cloudflare:** use the CI workflow, which fills in the CSP origins for your API and Cognito
+region. There is deliberately no local deploy script.
 
 ### CI/CD setup
 Repo variables: `AWS_REGION`, `FRONTEND_ORIGIN`. Secrets: `AWS_DEPLOY_ROLE_ARN` (IAM role trusting GitHub OIDC,
