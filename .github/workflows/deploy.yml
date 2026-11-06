@@ -1,0 +1,70 @@
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write # OIDC to AWS: no long-lived AWS keys in GitHub (known issue: scope this to the deploy job, see docs/security.md)
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: '**/package-lock.json' }
+      - run: npm ci && npm run typecheck && npm test
+        working-directory: backend
+      - run: npm ci && npm run typecheck
+        working-directory: frontend
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production # add required reviewers in repo settings
+    env:
+      STACK: healthcare-crm-prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: aws-actions/setup-sam@v2
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Backend deploy (SAM)
+        run: |
+          (cd backend && npm ci)
+          sam build -t infra/template.yaml
+          sam deploy --stack-name "$STACK" --resolve-s3 --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset --no-confirm-changeset \
+            --parameter-overrides Stage=prod AllowedOrigin="${{ vars.FRONTEND_ORIGIN }}"
+
+      - name: Read stack outputs
+        run: |
+          out() { aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          echo "VITE_API_URL=$(out ApiUrl)" >> "$GITHUB_ENV"
+          echo "VITE_USER_POOL_ID=$(out UserPoolId)" >> "$GITHUB_ENV"
+          echo "VITE_USER_POOL_CLIENT_ID=$(out UserPoolClientId)" >> "$GITHUB_ENV"
+
+      - name: Lock CSP to this deployment's origins
+        working-directory: frontend
+        run: |
+          sed -i "s|__API_ORIGIN__|$VITE_API_URL|; s|__COGNITO_ORIGIN__|https://cognito-idp.${{ vars.AWS_REGION }}.amazonaws.com|" public/_headers
+
+      - name: Build and deploy frontend (Cloudflare)
+        working-directory: frontend
+        run: npm ci && npm run build
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: deploy
