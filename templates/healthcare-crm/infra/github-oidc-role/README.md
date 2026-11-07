@@ -21,7 +21,7 @@ notes ask for.
 
 | Name | Value |
 |---|---|
-| `RoleArn` | store it in the GitHub secret `AWS_DEPLOY_ROLE_ARN` |
+| `RoleArn` | paste it into the `aws_deploy_role_arn` input when you start the deploy workflow |
 
 ## Deploy
 

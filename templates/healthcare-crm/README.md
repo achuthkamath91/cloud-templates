@@ -122,10 +122,57 @@ First sign-in prompts for a new password, then TOTP enrolment, then a code.
 **Deploying the frontend to Cloudflare:** use the CI workflow, which fills in the CSP origins for your API and Cognito
 region. There is deliberately no local deploy script.
 
-### CI/CD setup
-Repo variables: `AWS_REGION`, `FRONTEND_ORIGIN`. Secrets: `AWS_DEPLOY_ROLE_ARN` (IAM role trusting GitHub OIDC,
-restricted to this repo and the `production` environment; create it with [`infra/github-oidc-role`](infra/github-oidc-role)), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
-Create a `production` environment with required reviewers.
+### Deploying (manual, with inputs)
+
+Deploying never runs by itself. You start it by hand and type four inputs, so nothing needs to be stored in the repo
+settings first:
+
+| Input | Example | What it is |
+|---|---|---|
+| `aws_region` | `us-east-1` | Region where the AWS stacks are created |
+| `frontend_origin` | `https://crm.example.com` | Web address of the app: https, no path. The only address allowed to call the API from a browser |
+| `aws_deploy_role_arn` | `arn:aws:iam::123456789012:role/github-actions-deploy` | Role GitHub assumes to deploy. It is the `RoleArn` output of [`infra/github-oidc-role`](infra/github-oidc-role), limited to this repo and the `production` environment |
+| `stack_prefix` | `healthcare-crm-prod` | Name shared by every stack of the deployment |
+
+Two values cannot be typed in because they are secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Add them as
+repo secrets, and create a `production` environment with required reviewers.
+
+Start it from the Actions tab (`healthcare-crm`, **Run workflow**), or from a terminal:
+
+```bash
+gh workflow run healthcare-crm.yml --ref main \
+  -f aws_region=us-east-1 \
+  -f frontend_origin=https://crm.example.com \
+  -f aws_deploy_role_arn=arn:aws:iam::123456789012:role/github-actions-deploy \
+  -f stack_prefix=healthcare-crm-prod
+```
+
+Until you do, the deploy job does not run. Pushes and pull requests only run the tests.
+
+### Deploy with an AI agent
+
+Fill in the four values and paste this into Claude Code or another coding agent:
+
+```text
+Deploy the healthcare CRM template with its manual deploy workflow.
+
+Inputs (never guess one; ask me if any is missing):
+- aws_region: <us-east-1>
+- frontend_origin: <https://crm.example.com>
+- aws_deploy_role_arn: <arn:aws:iam::123456789012:role/github-actions-deploy>
+- stack_prefix: <healthcare-crm-prod>
+
+Steps:
+1. Read AGENTS.md and templates/healthcare-crm/AGENTS.md.
+2. Check that the repo has the secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID and a "production"
+   environment (gh secret list; gh api repos/{owner}/{repo}/environments). If anything is missing, stop and tell me.
+3. Show me the exact gh workflow run command with my inputs and wait for my yes.
+4. Run it on main and follow it with gh run watch. If it fails, read the failed step's log and tell me the cause.
+   Do not retry or change anything without asking.
+Never put a secret in this prompt or in the chat.
+```
+
+The workflow checks each input before it touches AWS, so a typo fails fast with a clear message.
 
 ## Why DynamoDB and not SQL?
 See [ADR 0001](docs/adr/0001-dynamodb-over-aurora.md): known access patterns, no VPC, tenant isolation by key prefix.
