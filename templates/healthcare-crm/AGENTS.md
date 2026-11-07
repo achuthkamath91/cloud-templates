@@ -65,5 +65,5 @@ which fills in the security-header origins that a local deploy would leave as pl
   migration is needed, but say so in the PR.
 - **New or changed stack:** update its README, `infra/README.md` and the deploy steps in the workflow.
 - **Behaviour or security change:** update `docs/security.md` (built-in controls and known issues).
-- **Diagram:** `docs/architecture.svg` is plain SVG with embedded service logos. Edit it by hand, keep the alt text in
+- **Diagram:** `docs/architecture.svg` is plain SVG with embedded service logos and moving dots (SVG `animateMotion`, no scripts, so it also plays in the GitHub README). The dots live in the `<g id="flow">` group at the end and follow the same coordinates as the arrows: when you move an arrow, move its dots. Keep the `prefers-reduced-motion` rule that hides them. Edit it by hand, keep the alt text in
   both READMEs in sync, and keep the trademark note.
