@@ -51,11 +51,11 @@ deploy job's `setup-node`) is known and believed to be a false positive; do not 
   you to copy. When two templates need the same stack, copy it; never link across templates.
 - **Be honest about status.** Never call anything production-ready, certified, or HIPAA-compliant. Keep each template's
   known-issues list in `docs/security.md` accurate: remove an item only when it is really fixed.
-- **Never deploy.** Do not create cloud resources or run commands against a real AWS or Cloudflare account.
+- **Deploy only when asked, and only one way.** Never create cloud resources or run commands against a real AWS or Cloudflare account yourself. The one allowed route is the manual `healthcare-crm.yml` workflow (see "Deploy with an AI agent" in the template README), and only when the user has given all four inputs (`aws_region`, `frontend_origin`, `aws_deploy_role_arn`, `stack_prefix`) and said to deploy. Show the exact `gh workflow run` command first and wait for a yes. Never guess an input, and never put a secret in a prompt or in chat.
 - **No secrets and no real patient data.** Not in code, tests, logs, docs or examples. Use synthetic data such as
   `clinic-1` and `Ann Lee`. `.env` files are ignored; only `.env.example` is committed.
 - **Workflows:** pin every action to a commit SHA with a `# vX` comment. Keep `permissions` minimal (`id-token: write`
-  only on the deploy job). Pass `vars.*` and `secrets.*` through `env:`, never straight into a shell script.
+  only on the deploy job). Pass `vars.*`, `secrets.*` and `inputs.*` through `env:`, never straight into a shell script.
 - **Infra stacks:** the stacks of one deployment share an `ExportPrefix`. Exports are named `<prefix>-<Name>` and every
   `Fn::ImportValue` must match an export. Keep stateful resources (`DeletionPolicy: Retain`, deletion protection).
   Each stack folder has its own README (parameters, exports, deploy command) and is listed in the template's

@@ -52,7 +52,7 @@ npm run dev                                  # needs a .env copied from .env.exa
 cfn-lint "infra/*/template.yaml"
 ```
 
-There is no local deploy script on purpose. Deployment happens only through `.github/workflows/healthcare-crm.yml`,
+There is no local deploy script on purpose. Deployment happens only through a manual (`workflow_dispatch`) run of `.github/workflows/healthcare-crm.yml`, whose four inputs are listed in the README,
 which fills in the security-header origins that a local deploy would leave as placeholders.
 
 ## When you change something
